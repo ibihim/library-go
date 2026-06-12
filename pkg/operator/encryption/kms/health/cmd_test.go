@@ -1,10 +1,13 @@
 package health
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	k8senvelopekmsv2 "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2"
 )
 
 // validOptions returns an options value that passes validate. Each test case
@@ -111,6 +114,51 @@ func TestValidate(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
+		})
+	}
+}
+
+// buildPlugins fails fast on any NewGRPCService error, which is only safe if
+// such an error can never mean "plugin down". This pins the vendored behavior:
+// construction performs no I/O (a well-formed endpoint without a listening
+// socket succeeds; reachability surfaces at the Status RPC instead), so the
+// only error left is a malformed endpoint.
+func TestNewGRPCServiceErrsOnlyOnParse(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		wantErr  bool
+	}{
+		{
+			name:     "well-formed endpoint without a listening socket",
+			endpoint: "unix://" + filepath.Join(t.TempDir(), "kms-1.sock"),
+		},
+		{
+			name:     "empty endpoint",
+			endpoint: "",
+			wantErr:  true,
+		},
+		{
+			name:     "non-unix scheme",
+			endpoint: "https://localhost:1234",
+			wantErr:  true,
+		},
+		{
+			name:     "missing scheme",
+			endpoint: "/var/run/kmsplugin/kms-1.sock",
+			wantErr:  true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			service, err := k8senvelopekmsv2.NewGRPCService(t.Context(), tc.endpoint, providerName, time.Second)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, service)
 		})
 	}
 }
